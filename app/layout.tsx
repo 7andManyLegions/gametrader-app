@@ -1,36 +1,64 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import NavBar from '@/components/NavBar';
-import { Toaster } from 'react-hot-toast';
-import { ThemeProvider } from '@/lib/ThemeContext';
+'use client';
+
+import './globals.css';
+import { AuthProvider } from '@/context/AuthContext';
+import { CartProvider } from '@/context/CartContext';
+import { SearchProvider } from '@/context/SearchContext';
+import TopSearchBar from '@/components/TopSearchBar';
+import SearchPopup from '@/components/SearchPopup';
+import { Anton } from 'next/font/google';
+import { Bebas_Neue } from 'next/font/google';
+import { Manrope } from 'next/font/google';
+import { Poppins } from 'next/font/google';
 
 
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+const anton = Anton({
+  weight: '400',
+  subsets: ['latin'],
+  variable: '--font-anton',
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const bebas = Bebas_Neue({
+  weight: '400', 
+  subsets: ['latin'],
+  variable: '--font-bebas',
 });
 
-export const metadata = {
-  title: 'GameTrader',
-  description: "Buy for less. Sell for more.",
- };
+const manrope = Manrope({
+  subsets: ['latin'],
+  weight: ['400', '600', '700'],
+  variable: '--font-manrope',
+});
 
- export default function RootLayout({ children }: { children: React.ReactNode }) {
+const poppins = Poppins({
+  subsets: ['latin'],
+  weight: ['300', '400', '600', '700'],
+  variable: '--font-poppins',
+});
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="antialiased">
-        <ThemeProvider>
-          <NavBar />
-          <Toaster position="top-center" /> 
-          {children}
-        </ThemeProvider>
+    <html lang="en" className={poppins.variable}>
+            <head>
+        <script
+          src="https://www.google.com/recaptcha/enterprise.js?render=6LfiKoErAAAAAODj_xpFDmh0ltGZlGG2N-hmvxA3"
+          async
+          defer
+        ></script>
+      </head>
+      <body className={poppins.variable}>
+        <AuthProvider>
+          <CartProvider>
+            <SearchProvider>
+              <TopSearchBar />
+              <SearchPopup />
+               <main className="pt-20 px-4">{children}</main>
+               <div id="modal-root" />
+               <div id="recaptcha-container" className="hidden" />
+            </SearchProvider>
+          </CartProvider>
+        </AuthProvider>
       </body>
     </html>
   );

@@ -18,7 +18,7 @@ export function useIdleLogout() {
     const handleLogout = () => {
       if (auth.currentUser) {
         toast('You were logged out due to inactivity');
-        router.push('/logout');
+        router.push('/logged-out');
       }
     };
 

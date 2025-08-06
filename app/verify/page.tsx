@@ -2,30 +2,30 @@
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
+import Spinner from '@/components/Spinner';
+
 
 export default function VerifyEmailPage() {
   const searchParams = useSearchParams();
-  const email = searchParams.get('email');
+if (!searchParams) {
+  return <Spinner />;
+}
+const email = (searchParams as URLSearchParams).get('email') ?? '';
+
   const router = useRouter();
   const [status, setStatus] = useState<'checking' | 'redirecting' | 'error'>('checking');
 
   useEffect(() => {
     const verifyEmail = async () => {
-      if (!email) {
-        setStatus('error');
-        return;
-      }
+      if (!email) return setStatus('error');
 
       const ref = doc(db, 'pendingUsers', email);
       const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        setStatus('error');
-        return;
-      }
+      if (!snap.exists()) return setStatus('error');
 
-      await updateDoc(ref, { verified: true });
+      await setDoc(ref, { verified: true }, { merge: true });
       toast.success('Email verified!');
       setStatus('redirecting');
       setTimeout(() => {

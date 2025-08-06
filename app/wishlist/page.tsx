@@ -1,7 +1,7 @@
 // /app/wishlist/page.tsx
 'use client';
 import ImageModal from '@/components/ImageModal';
-import { useAuth } from '@/lib/useAuth';
+import { useAuth } from '@/hooks/useAuth';
 import { db } from '@/lib/firebase';
 import {
   collection,

@@ -4,10 +4,12 @@ import { fetchSignInMethodsForEmail } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
 import { doc, setDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
+import { useRouter } from 'next/navigation';
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,20 +21,21 @@ export default function RegisterPage() {
     try {
       const methods = await fetchSignInMethodsForEmail(auth, email);
       if (methods.length > 0) {
-        // Email already in use → send friendly email (simulate with Firestore for now)
+        // Email already in use
         await setDoc(doc(db, 'emailNotify', email), {
           message: 'Someone tried to register with your email. If it was you, log in instead.',
           attemptedAt: new Date(),
         });
         toast.success('Check your email for further instructions.');
       } else {
-        // New email → mark as pending + simulate verification link
+        // Save pending user and redirect to simulated verification link
         await setDoc(doc(db, 'pendingUsers', email), {
           email,
           verified: false,
           createdAt: new Date(),
         });
-        toast.success('Verification email sent. Please check your inbox.');
+        toast.success('Verification email sent.');
+        router.push(`/verify?email=${encodeURIComponent(email)}`);
       }
     } catch (err) {
       console.error(err);
@@ -57,7 +60,7 @@ export default function RegisterPage() {
         <button
           type="submit"
           disabled={loading}
-          className="bg-blue-600 text-white px-4 py-2 rounded w-full disabled:opacity-50"
+          className="bg-blue-600 text-white px-4 py-2 rounded w-full disabled:opacity-50 hover:bg-blue-700"
         >
           {loading ? 'Checking...' : 'Continue'}
         </button>

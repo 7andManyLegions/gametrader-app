@@ -1,40 +1,52 @@
+// pages/api/recommend-price.ts
 import type { NextApiRequest, NextApiResponse } from 'next';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import stringSimilarity from 'string-similarity';
 
 puppeteer.use(StealthPlugin());
 
-type Data = {
-  title: string;
+type ScrapedData = {
+  title?: string;
   sellPrice?: number;
   tradeInPrice?: number;
   recommendedPrice?: number;
   error?: string;
-  debug?: any;
 };
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<Data>) {
-  const { title } = req.query;
+type Data = {
+  title: string;
+  recommendedPrice?: number;
+  sources?: {
+    gamestop?: ScrapedData;
+    amazon?: ScrapedData;
+  };
+  error?: string;
+};
 
-  if (!title || typeof title !== 'string') {
-    return res.status(400).json({ title: '', error: 'Missing title query parameter' });
-  }
+// Normalize input strings for better fuzzy matching
+function normalize(str: string): string {
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
 
-  const query = title.trim().toLowerCase().replace(/\s+/g, '-');
+async function scrapeGamestop(title: string): Promise<ScrapedData | null> {
   let browser;
-
   try {
     browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
+    const normalizedQuery = normalize(title);
+    const urlQuery = title.trim().toLowerCase().replace(/\s+/g, '-');
 
-    // 1. Go to GameStop Search Page
     const searchUrl = `https://www.gamestop.com/search/?q=${encodeURIComponent(title)}`;
     await page.goto(searchUrl, { waitUntil: 'networkidle2' });
-
     await page.waitForSelector('a.product-tile-link.render-tile-link.pdp-link', { timeout: 10000 });
 
-    // 2. Extract all product links and titles
-    const productLinks = await page.evaluate(() => {
+    const productLinks: { href: string; text: string }[] = await page.evaluate(() => {
       const anchors = Array.from(document.querySelectorAll('a.product-tile-link.render-tile-link.pdp-link'));
       return anchors.map(anchor => ({
         href: (anchor as HTMLAnchorElement).href || '',
@@ -43,104 +55,127 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
 
     if (!productLinks.length) {
-      return res.status(404).json({ title, error: 'No product links found in search results' });
+      return { error: 'No product links found on GameStop.' };
     }
 
-    // 3. Score best match
-    // Score and sort results
-const scored = productLinks
-.map(p => {
-  const normalizedHref = p.href.toLowerCase();
-  const normalizedText = p.text.toLowerCase();
-  let score = 0;
+    type ProductMatch = { href: string; text: string; score: number; similarity: number; };
 
-  if (normalizedHref.includes(query)) score += 2;
-  if (normalizedText.includes(title.toLowerCase())) score += 1;
+    const scored: ProductMatch[] = productLinks
+      .map((p): ProductMatch => {
+        const normalizedTitle = normalize(p.text);
+        const similarity = stringSimilarity.compareTwoStrings(normalizedTitle, normalizedQuery);
+        let score = similarity * 5;
+        if (normalizedTitle.includes(normalizedQuery)) score += 1;
+        if (p.href.toLowerCase().includes(urlQuery)) score += 0.5;
+        return { href: p.href, text: p.text, score, similarity };
+      })
+      .sort((a, b) => b.score - a.score);
 
-  return { ...p, score };
-})
-.sort((a, b) => b.score - a.score);
+    const bestMatch = scored[0];
+    if (!bestMatch || bestMatch.similarity < 0.4) {
+      return { error: 'No high-confidence match found on GameStop.' };
+    }
 
-// Use best non-zero score, or fallback to first if all are zero
-const bestMatch = scored.find(p => p.score > 0) || scored[0];
-
-if (!bestMatch?.href) {
-return res.status(404).json({
-  title,
-  error: 'No good match found for listing title',
-  debug: {
-    query,
-    candidates: productLinks.slice(0, 5),
-    scored: scored.slice(0, 5),
-  },
-});
-}
-
-
-    if (!bestMatch?.href) {
-        return res.status(404).json({
-          title,
-          error: 'No good match found for listing title',
-          debug: {
-            query,
-            candidates: productLinks.slice(0, 5),
-            scored: scored.slice(0, 5),
-          },
-        });
-      }
-      
-      // If score is 0, log it but proceed anyway as fallback
-      if (bestMatch.score === 0) {
-        console.warn(`Fallback: proceeding with low-confidence match for "${title}" →`, bestMatch.href);
-      }
-      
-
-    // 4. Extract PID from URL
     const pidMatch = bestMatch.href.match(/\/(\d+)\.html$/);
     const pid = pidMatch ? pidMatch[1] : null;
 
     if (!pid) {
-      return res.status(500).json({ title, error: 'Could not extract PID from product URL' });
+      return { error: 'Could not extract PID from GameStop product URL.' };
     }
 
-    // 5. Scrape Sell Price
     await page.goto(bestMatch.href, { waitUntil: 'networkidle2' });
     const sellPriceRaw = await page.$eval('div.primary-details-row span.actual-price', el =>
       el.textContent?.replace(/[^\d.]/g, '') || '0'
     );
     const sellPrice = parseFloat(sellPriceRaw);
 
-    // 6. Scrape Trade-In Price
     const tradeUrl = `https://www.gamestop.com/trade/details/?pid=${pid}`;
-await page.goto(tradeUrl, { waitUntil: 'networkidle2' });
+    await page.goto(tradeUrl, { waitUntil: 'networkidle2' });
 
-const tradeInPrice = await page.evaluate(() => {
-  const spans = Array.from(document.querySelectorAll('.trade-value span'));
-  const values = spans
-    .map(el => el.textContent?.match(/[\d.]+/))
-    .filter(Boolean)
-    .map(match => parseFloat(match?.[0] || '0'))
-    .filter(v => !isNaN(v));
+    const tradeInPrice = await page.evaluate(() => {
+      const spans = Array.from(document.querySelectorAll('.trade-value span'));
+      const values = spans
+        .map(el => el.textContent?.match(/[\d.]+/))
+        .filter(Boolean)
+        .map(match => parseFloat(match?.[0] || '0'))
+        .filter(v => !isNaN(v));
+      return values.length ? Math.min(...values) : 0;
+    });
 
-  return values.length ? Math.min(...values) : 0;
-});    
-
-    // 7. Final response
     if (isNaN(sellPrice) || isNaN(tradeInPrice)) {
-      return res.status(500).json({ title: bestMatch.text, error: 'Could not extract both prices' });
+      return { error: 'Could not extract both prices from GameStop.' };
     }
 
-    const recommendedPrice = Math.round(((sellPrice + tradeInPrice) / 2) * 100) / 100;
+    const recommendedPrice = Math.round(sellPrice - ((sellPrice - tradeInPrice) * .66));
 
-    res.status(200).json({
+    return {
       title: bestMatch.text,
       sellPrice,
       tradeInPrice,
       recommendedPrice,
-    });
+    };
   } catch (error: any) {
-    res.status(500).json({ title, error: error.message || 'Something went wrong' });
+    console.error('GameStop scraper error:', error);
+    return { error: error.message || 'GameStop scraper failed.' };
   } finally {
     if (browser) await browser.close();
   }
+}
+
+async function scrapeAmazon(title: string): Promise<ScrapedData | null> {
+  let browser;
+  try {
+    browser = await puppeteer.launch({ headless: true });
+    const page = await browser.newPage();
+    const searchUrl = `https://www.amazon.com/s?k=${encodeURIComponent(title)}`;
+    await page.goto(searchUrl, { waitUntil: 'networkidle2' });
+
+    const productData = await page.evaluate(() => {
+      const firstProduct = document.querySelector('.s-result-item .a-price-whole');
+      const firstProductTitle = document.querySelector('.s-result-item h2 a span');
+      if (firstProduct && firstProductTitle) {
+        const sellPrice = parseFloat(firstProduct.textContent?.replace(/[^0-9.]/g, '') || '0');
+        return {
+          title: firstProductTitle.textContent || '',
+          sellPrice,
+        };
+      }
+      return null;
+    });
+
+    if (productData) {
+      return productData;
+    } else {
+      return { error: 'No product found on Amazon.' };
+    }
+  } catch (error: any) {
+    console.error('Amazon scraper error:', error);
+    return { error: error.message || 'Amazon scraper failed.' };
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse<Data>) {
+  const { title } = req.query;
+
+  if (!title || typeof title !== 'string') {
+    return res.status(400).json({ title: '', error: 'Missing title query parameter' });
+  }
+
+  const [gamestopData, amazonData] = await Promise.all([
+    scrapeGamestop(title),
+    scrapeAmazon(title)
+  ]);
+
+  const recommendedPrice = gamestopData?.recommendedPrice;
+
+  res.status(200).json({
+    title: gamestopData?.title || amazonData?.title || title,
+    recommendedPrice,
+    sources: {
+      gamestop: gamestopData || undefined,
+      amazon: amazonData || undefined,
+    },
+  });
 }
