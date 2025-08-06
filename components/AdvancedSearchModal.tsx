@@ -3,7 +3,7 @@ import { useState, Fragment } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import { X, Check } from 'lucide-react';
 import { useSearch } from '@/context/SearchContext';
-import { CONSOLES, ITEM_TYPES } from './TitleAutocompleteInput';
+import { CONSOLES, ITEM_TYPES } from '@/lib/constants';
 
 export default function AdvancedSearchModal({
   isOpen,
